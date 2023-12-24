@@ -4,20 +4,27 @@
   Copyright (c) Jaromaz https://jm.iq.pl/en
   Available commands:
   login, p[0-2] [on|off], temp, help, vcc, clear,
-  uptime, clock [1-7], ls, reboot, logout, exit
+  uptime, clock [1-7], ls, reboot, logout, exit,
+  history, configpin
   ----------------------------------------------- */
+#include <DigiCDC.h>
+
 
 // password of up to seven characters
 const char password[] = "admin12";
 
 //-----------------------------------------------
 
-#include <DigiCDC.h>
-
 char serialChar[1], stringInput[8];
 bool stringComplete = false;
 uint8_t state = 1;
 uint8_t clocks[] = { 16, 8, 4, 2, 1, 500, 250, 125 };
+bool gpioDefaults[3] = {false, false, false};
+
+// Command History
+#define MAX_COMMAND_HISTORY 1
+char commandHistory[MAX_COMMAND_HISTORY][8];
+uint8_t historyIndex = 0;
 
 static void reboot()
 //-----------------------------------------------
@@ -29,6 +36,69 @@ static void reboot()
   void (*ptrToFunction)();
   ptrToFunction = 0x0000;
   (*ptrToFunction)();
+}
+
+static void addToHistory(char *command) 
+//-----------------------------------------------
+{
+  if (historyIndex < MAX_COMMAND_HISTORY) {
+    strncpy(commandHistory[historyIndex], command, sizeof(commandHistory[0]));
+    historyIndex = (historyIndex + 1) % MAX_COMMAND_HISTORY;
+  }
+}
+
+static void showCommandHistory()
+//-----------------------------------------------
+{
+  SerialUSB.println(F("\nCommand History:"));
+  for (uint8_t i = 0; i < MAX_COMMAND_HISTORY; ++i) {
+    SerialUSB.println(commandHistory[i]);
+  }
+}
+
+static void configurePin(uint8_t pin, bool isOutput)
+//-----------------------------------------------
+{
+  if (isOutput) {
+    DDRB |= (1 << pin);
+  } else {
+    DDRB &= ~(1 << pin);
+  }
+}
+
+static void configurePinHandler() 
+{
+  configurePin(3, true);
+}
+
+static void getPinConfig(uint8_t pin)
+//-----------------------------------------------
+{
+  SerialUSB.print(F("\nPin "));
+  SerialUSB.print(pin);
+  if (DDRB & (1 << pin)) {
+    SerialUSB.println(F(" is configured as OUTPUT"));
+  } else {
+    SerialUSB.println(F(" is configured as INPUT"));
+  }
+}
+
+static void setDefaultGPIOState(uint8_t pin, bool state)
+//-----------------------------------------------
+{
+  gpioDefaults[pin] = state;
+}
+
+static void showDefaultGPIOStates()
+//-----------------------------------------------
+{
+  SerialUSB.println(F("\nDefault GPIO States:"));
+  for (uint8_t i = 0; i < 3; ++i) {
+    SerialUSB.print(F("Pin "));
+    SerialUSB.print(i);
+    SerialUSB.print(F(": "));
+    SerialUSB.println(gpioDefaults[i] ? F("HIGH") : F("LOW"));
+  }
 }
 
 static void getVcc()
@@ -61,16 +131,14 @@ static void clockSpeed(uint8_t speed)
 // edit the code of this procedure to get the right result
 {
   clockMessageFormat(speed);
-  for (uint8_t i = 0; i < 12; i++) {
+  for (uint8_t i = 0; i < 6; i++) {
     PORTB |= (1 << 1);
     SerialUSB.delay(200);
     PORTB &= ~(1 << 1);
     SerialUSB.delay(200);
-    if (i == 5) {
-      CLKPR = 0b10000000;
-      CLKPR = speed;
-    }
   }
+  CLKPR = 0b10000000;
+  CLKPR = speed;
   reboot();
 }
 
@@ -194,12 +262,12 @@ void setup()
 }
 
 // list of keywords and procedures assigned to them
-static const struct { const char phrase[8]; void (*handler)(void); } keys[] =
+static const struct { const char phrase[12]; void (*handler)(void); } keys[] =
 {
   // ---- comment on this block to get more memory for your own code ---
   { "vcc", getVcc }, { "help", help }, { "temp", getTemp },
   { "reboot", reboot },  { "exit", stateChg }, { "uptime", uptime },
-  { "clear", clearScreen }, { "ls", gpioList },
+  { "clear", clearScreen }, { "ls", gpioList }, { "history", showCommandHistory }, { "configpin", configurePinHandler },
   // -------------------------------------------------------------------
   { "logout", stateChg }
 };
@@ -262,7 +330,7 @@ void loop()
 
     SerialUSB.delay(200);
 
-    stringInput[0] = 0;
+    stringInput[0] = '\0';
     stringComplete = false;
   }
 }
